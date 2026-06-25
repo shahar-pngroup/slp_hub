@@ -1,9 +1,9 @@
-import sys
-sys.path.insert(0, r'C:\SSIS\Prod\Python')
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
-from Connections.outlook import send_outlook_email
 import os
 import io
 
@@ -15,25 +15,37 @@ AIRTABLE_TOKEN   = os.getenv('AIRTABLE_SLP2_ACCESS_TOKEN', '')
 AIRTABLE_BASE_ID = os.getenv('AIRTABLE_SLP2_BASE_ID', '')
 
 GDRIVE_FOLDER_ID = '1bfn7erhPHh57gCo_9Q2aoXdD1cVf7-VU'
-CREDENTIALS_PATH = r'C:\SSIS\Prod\Python\connections\credentials_oauth.json'
-TOKEN_PATH       = r'C:\SSIS\Prod\Python\connections\token.json'
-SCOPES           = ['https://www.googleapis.com/auth/drive.file']
+NOTIFY_EMAIL     = 'shahar@pngroup.co.il'
 
-NOTIFY_EMAIL     = 'shahar@pngroup.co.il'  # ← שנה לפי הצורך
+
+def send_email(subject, body, to_email):
+    from_email  = 'pngis@pngroup.co.il'
+    password    = os.getenv('SMTP_PASSWORD', '')
+    smtp_server = 'smtp.office365.com'
+    smtp_port   = 587
+
+    msg            = MIMEMultipart()
+    msg['From']    = from_email
+    msg['To']      = to_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    with smtplib.SMTP(smtp_server, smtp_port) as server:
+        server.starttls()
+        server.login(from_email, password)
+        server.sendmail(from_email, to_email, msg.as_string())
 
 
 def get_drive_service():
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
+    import json
+    from google.oauth2 import service_account
     from googleapiclient.discovery import build
-    creds = None
-    if os.path.exists(TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            with open(TOKEN_PATH, 'w') as t:
-                t.write(creds.to_json())
+
+    service_account_info = json.loads(os.getenv('GOOGLE_SERVICE_ACCOUNT', '{}'))
+    creds = service_account.Credentials.from_service_account_info(
+        service_account_info,
+        scopes=['https://www.googleapis.com/auth/drive.file']
+    )
     return build('drive', 'v3', credentials=creds)
 
 
@@ -61,7 +73,7 @@ def upload_file():
             'name'   : f'call_{call_num}_{file.filename}',
             'parents': [GDRIVE_FOLDER_ID]
         }
-        media    = MediaIoBaseUpload(
+        media = MediaIoBaseUpload(
             io.BytesIO(file.read()),
             mimetype=file.content_type or 'application/octet-stream'
         )
@@ -92,12 +104,7 @@ def notify():
     )
 
     try:
-        send_outlook_email(
-            subject    = subject,
-            body       = body,
-            to_email   = NOTIFY_EMAIL,
-            email_type = 'slp_chat_notify'
-        )
+        send_email(subject, body, NOTIFY_EMAIL)
         print(f'[notify] Email sent → {NOTIFY_EMAIL} | קריאה {call_num}')
         return jsonify({'ok': True})
     except Exception as e:
@@ -106,5 +113,6 @@ def notify():
 
 
 if __name__ == '__main__':
-    print('Chat Server → http://localhost:5050/chat?call_num=XXX')
-    app.run(host='0.0.0.0', port=5050, debug=False)
+    port = int(os.getenv('PORT', 5050))
+    print(f'Chat Server → http://localhost:{port}/chat?call_num=XXX')
+    app.run(host='0.0.0.0', port=port, debug=False)
