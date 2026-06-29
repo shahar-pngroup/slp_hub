@@ -1,7 +1,6 @@
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 import os
@@ -13,9 +12,9 @@ app = Flask(__name__, template_folder='templates')
 
 AIRTABLE_TOKEN   = os.getenv('AIRTABLE_SLP2_ACCESS_TOKEN', '')
 AIRTABLE_BASE_ID = os.getenv('AIRTABLE_SLP2_BASE_ID', '')
-
 GDRIVE_FOLDER_ID = '1bfn7erhPHh57gCo_9Q2aoXdD1cVf7-VU'
 NOTIFY_EMAIL     = 'shahar@pngroup.co.il'
+SERVICE_ACCOUNT_FILE = '/home/ubuntu/slp_hub/service_account.json'
 
 
 def send_email(subject, body, to_email):
@@ -37,13 +36,10 @@ def send_email(subject, body, to_email):
 
 
 def get_drive_service():
-    import json
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
-
-    service_account_info = json.loads(os.getenv('GOOGLE_SERVICE_ACCOUNT', '{}'))
-    creds = service_account.Credentials.from_service_account_info(
-        service_account_info,
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE,
         scopes=['https://www.googleapis.com/auth/drive.file']
     )
     return build('drive', 'v3', credentials=creds)
@@ -86,6 +82,7 @@ def upload_file():
         ).execute()
         return jsonify({'url': uploaded['webViewLink']})
     except Exception as e:
+        print(f'[upload] Error: {e}')
         return jsonify({'error': str(e)}), 500
 
 
@@ -113,6 +110,6 @@ def notify():
 
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5050))
+    port = int(os.getenv('PORT', 80))
     print(f'Chat Server → http://localhost:{port}/chat?call_num=XXX')
     app.run(host='0.0.0.0', port=port, debug=False)
