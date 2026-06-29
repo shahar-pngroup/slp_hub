@@ -18,9 +18,9 @@ SERVICE_ACCOUNT_FILE = '/home/ubuntu/slp_hub/service_account.json'
 
 
 def send_email(subject, body, to_email):
-    from_email  = 'pngis@pngroup.co.il'
+    from_email  = 'pngispngis@gmail.com'
     password    = os.getenv('SMTP_PASSWORD', '')
-    smtp_server = 'smtp.office365.com'
+    smtp_server = 'smtp.gmail.com'
     smtp_port   = 587
 
     msg            = MIMEMultipart()
