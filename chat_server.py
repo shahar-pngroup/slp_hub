@@ -5,7 +5,6 @@ from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 import os
-import io
 
 load_dotenv()
 
@@ -62,22 +61,14 @@ def upload_file():
     call_num = request.form.get('call_num', 'unknown')
 
     try:
-        s3        = get_s3_client()
-        file_key  = f'slp-calls/call_{call_num}_{file.filename}'
-        file_data = file.read()
+        s3       = get_s3_client()
+        file_key = f'slp-calls/call_{call_num}_{file.filename}'
 
         s3.put_object(
             Bucket      = S3_BUCKET,
             Key         = file_key,
-            Body        = file_data,
+            Body        = file.read(),
             ContentType = file.content_type or 'application/octet-stream'
-        )
-
-        # הפוך את הקובץ לציבורי
-        s3.put_object_acl(
-            Bucket = S3_BUCKET,
-            Key    = file_key,
-            ACL    = 'public-read'
         )
 
         url = f'https://{S3_BUCKET}.s3.eu-north-1.amazonaws.com/{file_key}'
