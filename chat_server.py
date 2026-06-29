@@ -1,4 +1,5 @@
 import smtplib
+import boto3
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, jsonify
@@ -12,9 +13,8 @@ app = Flask(__name__, template_folder='templates')
 
 AIRTABLE_TOKEN   = os.getenv('AIRTABLE_SLP2_ACCESS_TOKEN', '')
 AIRTABLE_BASE_ID = os.getenv('AIRTABLE_SLP2_BASE_ID', '')
-GDRIVE_FOLDER_ID = '1bfn7erhPHh57gCo_9Q2aoXdD1cVf7-VU'
 NOTIFY_EMAIL     = 'shahar@pngroup.co.il'
-SERVICE_ACCOUNT_FILE = '/home/ubuntu/slp_hub/service_account.json'
+S3_BUCKET        = os.getenv('AWS_S3_BUCKET', '')
 
 
 def send_email(subject, body, to_email):
@@ -35,14 +35,13 @@ def send_email(subject, body, to_email):
         server.sendmail(from_email, to_email, msg.as_string())
 
 
-def get_drive_service():
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=['https://www.googleapis.com/auth/drive.file']
+def get_s3_client():
+    return boto3.client(
+        's3',
+        region_name='eu-north-1',
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
     )
-    return build('drive', 'v3', credentials=creds)
 
 
 @app.route('/chat')
@@ -63,24 +62,27 @@ def upload_file():
     call_num = request.form.get('call_num', 'unknown')
 
     try:
-        from googleapiclient.http import MediaIoBaseUpload
-        service       = get_drive_service()
-        file_metadata = {
-            'name'   : f'call_{call_num}_{file.filename}',
-            'parents': [GDRIVE_FOLDER_ID]
-        }
-        media = MediaIoBaseUpload(
-            io.BytesIO(file.read()),
-            mimetype=file.content_type or 'application/octet-stream'
+        s3        = get_s3_client()
+        file_key  = f'slp-calls/call_{call_num}_{file.filename}'
+        file_data = file.read()
+
+        s3.put_object(
+            Bucket      = S3_BUCKET,
+            Key         = file_key,
+            Body        = file_data,
+            ContentType = file.content_type or 'application/octet-stream'
         )
-        uploaded = service.files().create(
-            body=file_metadata, media_body=media, fields='id,webViewLink'
-        ).execute()
-        service.permissions().create(
-            fileId=uploaded['id'],
-            body={'type': 'anyone', 'role': 'reader'}
-        ).execute()
-        return jsonify({'url': uploaded['webViewLink']})
+
+        # הפוך את הקובץ לציבורי
+        s3.put_object_acl(
+            Bucket = S3_BUCKET,
+            Key    = file_key,
+            ACL    = 'public-read'
+        )
+
+        url = f'https://{S3_BUCKET}.s3.eu-north-1.amazonaws.com/{file_key}'
+        return jsonify({'url': url})
+
     except Exception as e:
         print(f'[upload] Error: {e}')
         return jsonify({'error': str(e)}), 500
