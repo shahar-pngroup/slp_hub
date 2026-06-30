@@ -12,7 +12,7 @@ app = Flask(__name__, template_folder='templates')
 
 AIRTABLE_TOKEN   = os.getenv('AIRTABLE_SLP2_ACCESS_TOKEN', '')
 AIRTABLE_BASE_ID = os.getenv('AIRTABLE_SLP2_BASE_ID', '')
-NOTIFY_EMAIL     = 'shahar@pngroup.co.il'
+NOTIFY_EMAIL     = 'office@pngroup.co.il'
 S3_BUCKET        = os.getenv('AWS_S3_BUCKET', '')
 
 
