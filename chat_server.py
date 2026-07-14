@@ -1,5 +1,6 @@
 import smtplib
 import boto3
+import requests as req
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, jsonify
@@ -14,9 +15,11 @@ AIRTABLE_TOKEN   = os.getenv('AIRTABLE_SLP2_ACCESS_TOKEN', '')
 AIRTABLE_BASE_ID = os.getenv('AIRTABLE_SLP2_BASE_ID', '')
 NOTIFY_EMAIL     = 'office@pngroup.co.il'
 S3_BUCKET        = os.getenv('AWS_S3_BUCKET', '')
+SUPPORTERS_TBL   = 'Supporters'
+MANAGER_SAP_CODE = 46
 
 
-def send_email(subject, body, to_email):
+def send_email(subject, body, to_email, cc_email=''):
     from_email  = 'pngispngis@gmail.com'
     password    = os.getenv('SMTP_PASSWORD', '')
     smtp_server = 'smtp.gmail.com'
@@ -26,20 +29,60 @@ def send_email(subject, body, to_email):
     msg['From']    = from_email
     msg['To']      = to_email
     msg['Subject'] = subject
+    if cc_email:
+        msg['Cc'] = cc_email
     msg.attach(MIMEText(body, 'plain'))
+
+    recipients = [to_email] + ([cc_email] if cc_email else [])
 
     with smtplib.SMTP(smtp_server, smtp_port) as server:
         server.starttls()
         server.login(from_email, password)
-        server.sendmail(from_email, to_email, msg.as_string())
+        server.sendmail(from_email, recipients, msg.as_string())
+
+
+def get_supporter_email(name):
+    """מחזיר מייל תומכת לפי שם"""
+    try:
+        res = req.get(
+            f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{SUPPORTERS_TBL}',
+            headers={'Authorization': f'Bearer {AIRTABLE_TOKEN}'},
+            params={
+                'filterByFormula': f"{{name}}='{name}'",
+                'maxRecords'     : 1
+            }
+        ).json()
+        if res.get('records'):
+            return res['records'][0]['fields'].get('email', '')
+    except Exception as e:
+        print(f'[get_supporter_email] Error: {e}')
+    return ''
+
+
+def get_manager_email():
+    """מחזיר מייל המנהל לפי sap-user-code = 46"""
+    try:
+        res = req.get(
+            f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{SUPPORTERS_TBL}',
+            headers={'Authorization': f'Bearer {AIRTABLE_TOKEN}'},
+            params={
+                'filterByFormula': f'{{sap-user-code}}={MANAGER_SAP_CODE}',
+                'maxRecords'     : 1
+            }
+        ).json()
+        if res.get('records'):
+            return res['records'][0]['fields'].get('email', '')
+    except Exception as e:
+        print(f'[get_manager_email] Error: {e}')
+    return ''
 
 
 def get_s3_client():
     return boto3.client(
         's3',
-        region_name='eu-north-1',
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        region_name         = 'eu-north-1',
+        aws_access_key_id   = os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
     )
 
 
@@ -47,8 +90,8 @@ def get_s3_client():
 def chat():
     return render_template(
         'chat.html',
-        airtable_token=AIRTABLE_TOKEN,
-        airtable_base=AIRTABLE_BASE_ID
+        airtable_token = AIRTABLE_TOKEN,
+        airtable_base  = AIRTABLE_BASE_ID
     )
 
 
@@ -87,15 +130,21 @@ def notify():
     supporter = data.get('supporter', '')
     slp_issue = data.get('slp_issue', '')
 
+    # שלוף מיילים דינמית מטבלת Supporters
+    to_email = get_supporter_email(supporter) or NOTIFY_EMAIL
+    cc_email = get_manager_email()
+
     subject = f'הסוכן {slp_name} השיב לקריאה {call_num}'
     body    = (
-        f'שם תומכת: {supporter}\n'
-        f'מדובר בקריאה בנושא: {slp_issue}'
+        f'שלום {supporter},\n\n'
+        f'הסוכן {slp_name} השיב לקריאה מספר {call_num}.\n'
+        f'נושא הקריאה: {slp_issue}\n\n'
+        f'ניתן לצפות בהודעה דרך הממשק.'
     )
 
     try:
-        send_email(subject, body, NOTIFY_EMAIL)
-        print(f'[notify] Email sent → {NOTIFY_EMAIL} | קריאה {call_num}')
+        send_email(subject, body, to_email, cc_email)
+        print(f'[notify] Email sent → {to_email} | CC: {cc_email} | קריאה {call_num}')
         return jsonify({'ok': True})
     except Exception as e:
         print(f'[notify] Error: {e}')
