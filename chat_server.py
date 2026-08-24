@@ -1,15 +1,24 @@
 import smtplib
 import boto3
 import requests as req
+from datetime import timedelta
+from functools import wraps
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from dotenv import load_dotenv
 import os
+
+# from Connections.ConnectToSql import connect_to_db_test
+from Connections.ConnectToSql import connect_to_db
 
 load_dotenv()
 
 app = Flask(__name__, template_folder='templates')
+
+# ── חובה: מפתח סודי לסשן (יש להוסיף FLASK_SECRET_KEY ל-.env) ──
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'change-me-in-env')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)  # שומר את הכניסה בדפדפן (Chrome בנייד/טאבלט)
 
 AIRTABLE_TOKEN   = os.getenv('AIRTABLE_SLP2_ACCESS_TOKEN', '')
 AIRTABLE_BASE_ID = os.getenv('AIRTABLE_SLP2_BASE_ID', '')
@@ -19,6 +28,99 @@ SUPPORTERS_TBL   = 'Supporters'
 MANAGER_SAP_CODE = 46
 
 
+# ══════════════════════════════════════════════
+#  אימות סוכנים מול SQL (@ZIONA_USERS)
+# ══════════════════════════════════════════════
+def verify_agent(slp_code, password):
+    """מאמת קוד סוכן + סיסמה מול @ZIONA_USERS. מחזיר dict או None."""
+    query = """
+        select U_slpcode as [slp-code], name as name, U_password as password
+        from [@ZIONA_USERS]
+        where isnull(U_slpcode,0) > 0
+    """
+    connection = connect_to_db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(query)
+        rows = cursor.fetchall()
+    finally:
+        cursor.close()
+        connection.close()
+
+    slp_code_clean = str(slp_code).strip()
+    for row in rows:
+        row_code = str(row[0]).strip() if row[0] is not None else ''
+        row_name = row[1]
+        row_pass = row[2] if row[2] is not None else ''
+        if row_code == slp_code_clean and row_pass == password:
+            return {'slp_code': row_code, 'name': row_name}
+    return None
+
+
+def login_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if 'agent_code' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return wrapper
+
+
+# ══════════════════════════════════════════════
+#  Login / Logout
+# ══════════════════════════════════════════════
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        slp_code = request.form.get('slp_code', '').strip()
+        password = request.form.get('password', '').strip()
+
+        if not slp_code or not password:
+            error = 'יש להזין קוד סוכן וסיסמה'
+        else:
+            try:
+                agent = verify_agent(slp_code, password)
+            except Exception as e:
+                print(f'[login] SQL error: {e}')
+                agent = None
+                error = 'שגיאת מערכת בהתחברות, נסה שוב'
+
+            if agent:
+                session.permanent = True
+                session['agent_code'] = agent['slp_code']
+                session['agent_name'] = agent['name']
+                return redirect(url_for('agent_dashboard'))
+            elif not error:
+                error = 'קוד סוכן או סיסמה שגויים'
+
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
+# ══════════════════════════════════════════════
+#  Agent Dashboard (two-pane)
+# ══════════════════════════════════════════════
+@app.route('/agent')
+@login_required
+def agent_dashboard():
+    return render_template(
+        'agent.html',
+        airtable_token = AIRTABLE_TOKEN,
+        airtable_base  = AIRTABLE_BASE_ID,
+        agent_code     = session['agent_code'],
+        agent_name     = session['agent_name']
+    )
+
+
+# ══════════════════════════════════════════════
+#  קיים - לא שונה
+# ══════════════════════════════════════════════
 def send_email(subject, body, to_email, cc_email=''):
     from_email  = 'pngis@gmail.com'
     password    = os.getenv('SMTP_PASSWORD', '')
@@ -154,4 +256,5 @@ def notify():
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 80))
     print(f'Chat Server → http://localhost:{port}/chat?call_num=XXX')
+    print(f'Agent Login → http://localhost:{port}/login')
     app.run(host='0.0.0.0', port=port, debug=False)
