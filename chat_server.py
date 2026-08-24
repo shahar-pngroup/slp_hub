@@ -20,7 +20,7 @@ MANAGER_SAP_CODE = 46
 
 
 def send_email(subject, body, to_email, cc_email=''):
-    from_email  = 'pngispngis@gmail.com'
+    from_email  = 'pngis@gmail.com'
     password    = os.getenv('SMTP_PASSWORD', '')
     smtp_server = 'smtp.gmail.com'
     smtp_port   = 587
